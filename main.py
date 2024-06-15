@@ -1,10 +1,11 @@
-import os
+# -*- coding: utf-8 -*-
 import random
-import sys
 from datetime import datetime
 from datetime import timedelta
 from time import sleep
 import requests
+import json
+import re
 
 from selenium import webdriver
 from selenium.common.exceptions import NoSuchElementException
@@ -12,26 +13,54 @@ from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
 
 # Constants
-
 BASE_URL = "https://www.kicktipp.de"
 LOGIN_URL = "https://www.kicktipp.de/info/profil/login"
-EMAIL = os.getenv("KICKTIPP_EMAIL")
-PASSWORD = os.getenv("KICKTIPP_PASSWORD")
-NAME_OF_COMPETITION = os.getenv("KICKTIPP_NAME_OF_COMPETITION")
-CHROMEDRIVER_PATH = "/Applications/chromedriver"
-ZAPIER_URL = os.getenv("ZAPIER_URL")
+
+# read email, password and competition name from login_data.json file
+with open('login_data.json') as json_file:
+    data = json.load(json_file)
+    EMAIL = data['EMAIL']
+    PASSWORD = data['PASSWORD']
+    NAME_OF_COMPETITION = data['KICKTIPP_NAME_OF_COMPETITION']
+    ZAPIER_URL = data['ZAPIER_URL']
+
+# set up dictionary to get english names
+country_mapping = {
+    'Deutschland': 'germany',
+    'Ungarn': 'hungary',
+    'Schweiz': 'switzerland',
+    'Schottland': 'scotland',
+    'Spanien': 'spain',
+    'Kroatien': 'croatia',
+    'Italien': 'italy',
+    'Albanien': 'albania',
+    'Slowenien': 'slovenia',
+    'Dänemark': 'denmark',
+    'Serbien': 'serbia',
+    'England': 'england',
+    'Polen': 'poland',
+    'Niederlande': 'netherlands',
+    'Österreich': 'austria',
+    'Frankreich': 'france',
+    'Belgien': 'belgium',
+    'Slowakei': 'slovakia',
+    'Rumänien': 'romania',
+    'Ukraine': 'ukraine',
+    'Türkei': 'turkey',
+    'Georgien': 'georgia',
+    'Portugal': 'portugal',
+    'Tschechien': 'czech'
+}
 
 
-def execute():
-
+def execute(post_to_zapier: bool = True, headless: bool = True, debug_mode: bool = False):
     # create driver
-    try:
-        if sys.argv[1] == 'headless':
-            driver = webdriver.Chrome(
-                options=set_chrome_options())  # for docker
-        elif sys.argv[1] == 'local':
-            driver = webdriver.Chrome(CHROMEDRIVER_PATH)  # for local
-    except IndexError:
+    if headless and debug_mode:
+        raise ValueError('Cannot be headless and debug mode!')
+    elif headless:
+        driver = webdriver.Chrome(
+            options=set_chrome_options())  # for docker
+    elif debug_mode:
         print('Debug Mode\n')
         driver = webdriver.Chrome()  # debug
 
@@ -57,12 +86,19 @@ def execute():
     # entry form
     driver.get(F"https://www.kicktipp.de/{NAME_OF_COMPETITION}/tippabgabe")
 
+    # saw the AGB here again, so check and accept
+    try:
+        driver.find_element(
+            by=By.XPATH, value='//*[@id="qc-cmp2-ui"]/div[2]/div/button[2]').click()
+    except NoSuchElementException:
+        pass
+
     count = driver.find_elements(by=By.CLASS_NAME, value="datarow").__len__()
 
     # iterate over rows of the form
     for i in range(1, count + 1):
         try:
-             # get Team names
+            # get Team names
             homeTeam = driver.find_element(
                 by=By.XPATH, value='//*[@id="tippabgabeSpiele"]/tbody/tr[' + str(i) + ']/td[2]').get_attribute('innerHTML')
             awayTeam = driver.find_element(
@@ -86,11 +122,6 @@ def execute():
                 except ValueError:
                     pass
 
-
-                # find quotes
-                quotes = driver.find_element(
-                    by=By.XPATH, value='//*[@id="tippabgabeSpiele"]/tbody/tr[' + str(i) + ']/td[5]/a').get_property('innerHTML').split(sep=" / ")
-
                 # print time and team names
                 print(homeTeam + " - " + awayTeam +
                       "\nTime: " + str(time.strftime('%d.%m.%y %H:%M')))
@@ -103,12 +134,25 @@ def execute():
                 if timeUntilGame < timedelta(hours=2):
                     print("Game starts in less than 2 hours. Tipping now...")
 
+                    # find quotes
+                    quotes = driver.find_element(
+                        by=By.XPATH, value='//*[@id="tippabgabeSpiele"]/tbody/tr[' + str(i) + ']/td[5]/a').get_property('innerHTML').split(sep=" / ")
+                    quotes = process_quotes(quotes)
+
                     # print quotes
                     print("Quotes:" + str(quotes))
 
+                    # store original window
+                    original_window = driver.current_window_handle
+
+                    # get xG for home and away
+                    xG_home, xG_away = get_xG(driver, homeTeam, awayTeam, time)
+
+                    # switch back to original window
+                    driver.switch_to.window(original_window)
+
                     # calculate tips bases on quotes and print them
-                    tip = calculate_tip(float(quotes[0]), float(
-                        quotes[1]), float(quotes[2]))
+                    tip = calculate_tip(xG_home, xG_away, quotes)
                     print("Tip: " + str(tip))
                     print()
 
@@ -118,21 +162,22 @@ def execute():
 
                     # custom webhook to zapier
                     try:
-                        if sys.argv[2] == 'withZapier':
+                        if post_to_zapier:
                             url = ZAPIER_URL
+                            message = f"""
+                                🎉 **EURO 24 Vorhersage-Alarm!** 🎉
+                                
+                                Heute um {time} Uhr ist es soweit: {homeTeam} trifft auf {awayTeam}! 🏆⚽
 
+                                Unser Bot hat gesprochen: 
+                                **{homeTeam} {tip[0]}:{tip[1]} {awayTeam}**! 🔮
+
+                                Holt die Snacks und Getränke raus, macht es euch bequem und lasst uns gemeinsam die Tore feiern! 🍿🎉🍻
+                                """
                             payload = {
-                                'date': time,
-                                'team1': homeTeam,
-                                'team2': awayTeam,
-                                'quoteteam1': quotes[0],
-                                'quotedraw': quotes[1],
-                                'quoteteam2': quotes[2],
-                                'tipteam1': tip[0],
-                                'tipteam2': tip[1]}
-                            files = [
-
-                            ]
+                                'message': message
+                                }
+                            files = []
                             headers = {}
 
                             response = requests.request(
@@ -152,7 +197,7 @@ def execute():
 
         except NoSuchElementException:
             continue
-    sleep(0.1)
+    sleep(10 if debug_mode else 2)
 
     # submit all tips
     driver.find_element(by=By.NAME, value="submitbutton").submit()
@@ -168,7 +213,7 @@ def execute():
         print("Total bet not found")
 
     try:
-        if sys.argv[1] == 'local':
+        if debug_mode:
             print("Sleeping for 20secs to see the result - Debug Mode\n")
             sleep(20)
     except IndexError:
@@ -176,29 +221,82 @@ def execute():
 
     driver.quit()
 
+def get_xG(driver, homeTeam, awayTeam, time):
+    """
+    This method gets the expected goals for both teams from https://xgscore.io/.
+    """
+    # switch to a new tab in the browser
+    driver.switch_to.new_window('tab')
+    # build url to get xG from
+    # url has format https://xgscore.io/euro/$homeTeam-$awayTeam-$dd-$mm-$yy/xgscore
+    date = time.strftime('%d-%m-%y')
+    url = F"https://xgscore.io/euro/{country_mapping[homeTeam]}-{country_mapping[awayTeam]}-{date}/xgscore"
 
-def calculate_tip(home, draw, away):
-    """ Calculates the tip based on the quotes"""
+    # go to that link
+    driver.get(url)
 
-    # if negative the home team is more likely to win
-    differenceHomeAndAway = home - away
+    # get by xpath the home expected goals valuex
+    xG_home = driver.find_element(by=By.XPATH, value='//*[@id="xgs-game-result"]/div[2]/div/mark[1]')
+    xG_away = driver.find_element(by=By.XPATH, value='//*[@id="xgs-game-result"]/div[2]/div/mark[2]')
+    # actual float values
+    xG_home_value = float(remove_tags(xG_home.get_property('innerHTML')))
+    xG_away_value = float(remove_tags(xG_away.get_property('innerHTML')))
+    
+    # close tab
+    driver.close()
 
-    # generate random number between 0 and 1
-    onemore = round(random.uniform(0, 1))
+    return xG_home_value, xG_away_value
 
-    # depending on the quotes, the factor is derived to decrease the tip for very unequal games
-    coefficient = 0.3 if round(abs(differenceHomeAndAway)) > 7 else 0.75
+def process_quotes(quotes):
+    """
+    Quotes are displayed as strings and the first value has `Quote: ` in front of it.
+    This function processes the quotes and returns them as floats.
+    """
+    home = float(quotes[0].split(sep=" ")[1])
+    draw = float(quotes[1])
+    away = float(quotes[2])
+    return home, draw, away
 
-    # calculate tips
-    if abs(differenceHomeAndAway) < 0.25:
-        return onemore, onemore
+
+def remove_tags(text):
+    tag_re = re.compile(r'<[^>]+>')
+    return tag_re.sub('', text)
+
+# now build new prediction based on xG values and quotes for this game
+def compute_game_prediction(xG_home, xG_away, quotes):
+    # if home win quote is lower than away win quote, factor this onto the xG.
+    # if away win quote is lower, weight away xG.
+    home, draw, away = quotes
+    total_quote = sum(quotes)
+    prob_home = 1 - (home / total_quote)
+    prob_away = 1 - (away / total_quote)
+    prob_draw = 1 - (draw / total_quote)
+    factor_home = random.uniform(0, 1 + prob_home)
+    factor_draw = random.uniform(0, 1 + prob_draw)
+    factor_away = random.uniform(0, 1 + prob_away)
+    # maybe also include a error margin here
+    if not draw == min(quotes):
+        # weight home and away goals
+        pred_home = round(xG_home * factor_home)
+        pred_away = round(xG_away * factor_away)
     else:
-        if differenceHomeAndAway < 0:
-            return round(-differenceHomeAndAway * coefficient) + onemore, onemore
-        elif differenceHomeAndAway > 0:
-            return onemore, round(differenceHomeAndAway * coefficient) + onemore
-        else:
-            return onemore, onemore
+        # draw is the most likely, multiply both xG by factor
+        pred_home = round(xG_home * factor_draw)
+        pred_away = round(xG_away * factor_draw)
+
+    return pred_home, pred_away
+
+def calculate_tip(xG_home, xG_away, quotes, simulations=1000):
+    """
+    This method simulates the result as often as indicated 
+    and then selects the most frequent result, i.e. the mode.
+    """
+    predictions = []
+    for i in range(simulations):
+        result = compute_game_prediction(xG_home, xG_away, quotes)
+        predictions.append(result)
+    most_frequent_res = max(set(predictions), key=predictions.count)
+    return most_frequent_res
 
 
 def set_chrome_options() -> None:

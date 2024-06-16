@@ -20,4 +20,4 @@ If you want to receive a notification when the script tips for a match, you can 
 
 ## xG Data & Result Prediction
 
-The xG data is taken from the website [xGScore](https://xgscore.io/). The script uses the xG data to calculate the probability of a win, draw or loss for each team. Paired with the bookmakers' quotes, the script then determines the best tip for each match, by simulating a match result 1000 times and picking the most frequent result.
+The xG data is taken from the website [xGScore](https://xgscore.io/). The script uses the xG data to calculate the probability of a win, draw or loss for each team. Paired with the bookmakers' quotes, the script then determines a tip for the game, while also adding a random factor to the tip to not always tip the favorite.

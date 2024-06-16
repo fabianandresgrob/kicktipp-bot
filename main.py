@@ -152,7 +152,7 @@ def execute(post_to_zapier: bool = True, headless: bool = True, debug_mode: bool
                     driver.switch_to.window(original_window)
 
                     # calculate tips bases on quotes and print them
-                    tip = calculate_tip(xG_home, xG_away, quotes)
+                    tip = compute_game_prediction(xG_home, xG_away, quotes)
                     print("Tip: " + str(tip))
                     print()
 
@@ -163,17 +163,10 @@ def execute(post_to_zapier: bool = True, headless: bool = True, debug_mode: bool
                     # custom webhook to zapier
                     try:
                         if post_to_zapier:
+                            # convert time to hh:mm
+                            time_hours = time.strftime('%H:%M')
                             url = ZAPIER_URL
-                            message = f"""
-                                🎉 **EURO 24 Vorhersage-Alarm!** 🎉
-                                
-                                Heute um {time} Uhr ist es soweit: {homeTeam} trifft auf {awayTeam}! 🏆⚽
-
-                                Unser Bot hat gesprochen: 
-                                **{homeTeam} {tip[0]}:{tip[1]} {awayTeam}**! 🔮
-
-                                Holt die Snacks und Getränke raus, macht es euch bequem und lasst uns gemeinsam die Tore feiern! 🍿🎉🍻
-                                """
+                            message = f"""🎉 EURO 24 Vorhersage-Alarm! 🎉\n\nHeute um {time_hours} Uhr ist es soweit: {homeTeam} trifft auf {awayTeam}! 🏆⚽\nUnser Bot hat gesprochen:\n{homeTeam} {tip[0]}:{tip[1]} {awayTeam}! 🔮\nHolt die Snacks und Getränke raus, macht es euch bequem und lasst uns gemeinsam die Tore feiern! 🍿🎉🍻"""
                             payload = {
                                 'message': message
                                 }
@@ -285,19 +278,6 @@ def compute_game_prediction(xG_home, xG_away, quotes):
         pred_away = round(xG_away * factor_draw)
 
     return pred_home, pred_away
-
-def calculate_tip(xG_home, xG_away, quotes, simulations=1000):
-    """
-    This method simulates the result as often as indicated 
-    and then selects the most frequent result, i.e. the mode.
-    """
-    predictions = []
-    for i in range(simulations):
-        result = compute_game_prediction(xG_home, xG_away, quotes)
-        predictions.append(result)
-    most_frequent_res = max(set(predictions), key=predictions.count)
-    return most_frequent_res
-
 
 def set_chrome_options() -> None:
     """Sets chrome options for Selenium.
